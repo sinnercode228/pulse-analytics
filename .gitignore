@@ -1,0 +1,26 @@
+# dependencies
+node_modules/
+.venv/
+
+# builds & caches
+dist/
+build/
+coverage/
+.vite/
+.cache/
+*.tsbuildinfo
+.eslintcache
+server/public/p.js
+
+# env & local data
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+data/
+
+# misc
+.DS_Store
+*.log

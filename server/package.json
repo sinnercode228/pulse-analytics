@@ -1,0 +1,30 @@
+{
+  "name": "@pulse/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pulse ingestion + query API: Fastify, SQLite rollups, WebSocket live feed, uptime checker.",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "npm run build:tracker && tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "build": "npm run build:tracker && node scripts/build.mjs",
+    "build:tracker": "node scripts/build-tracker.mjs",
+    "seed": "tsx scripts/seed.ts",
+    "simulate": "tsx scripts/simulate.ts",
+    "worker:uptime": "tsx src/uptime-worker.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@fastify/static": "^10.1.4",
+    "@fastify/websocket": "^11.3.1",
+    "fastify": "^5.12.5"
+  },
+  "devDependencies": {
+    "@pulse/core": "*",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15"
+  }
+}

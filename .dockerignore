@@ -1,0 +1,12 @@
+node_modules
+**/node_modules
+**/dist
+server/public/p.js
+.git
+.github
+docs
+data
+*.db
+.env
+.venv
+coverage

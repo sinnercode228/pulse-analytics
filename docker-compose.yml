@@ -1,0 +1,37 @@
+# API + dashboard + tracker on http://localhost:8787, uptime checks in a separate worker
+# sharing the same SQLite volume (WAL mode).
+#   docker compose up -d --build
+#   docker compose run --rm seed      # optional: 30 days of synthetic demo data
+services:
+  api:
+    build: .
+    image: pulse-analytics:local
+    ports:
+      - '8787:8787'
+    environment:
+      UPTIME_MODE: 'off' # checks run in the `uptime` service below
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-} # empty = admin routes disabled; set in .env
+      CORS_ORIGIN: '*'
+    volumes:
+      - pulse-data:/data
+    restart: unless-stopped
+
+  uptime:
+    image: pulse-analytics:local
+    depends_on: [api]
+    command: ['node', 'dist/uptime-worker.js']
+    volumes:
+      - pulse-data:/data
+    restart: unless-stopped
+
+  seed:
+    image: pulse-analytics:local
+    profiles: [tools]
+    command: ['node', 'dist/seed.js', '--days', '30']
+    environment:
+      SELF_CHECK_URL: http://api:8787/api/health
+    volumes:
+      - pulse-data:/data
+
+volumes:
+  pulse-data:
