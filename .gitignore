@@ -19,7 +19,8 @@ server/public/p.js
 *.db
 *.db-shm
 *.db-wal
-data/
+/data/
+server/data/
 
 # misc
 .DS_Store
