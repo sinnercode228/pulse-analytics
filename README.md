@@ -1,165 +1,113 @@
-# Pulse — real-time web analytics & uptime monitoring
+# Pulse
 
-[![CI](https://github.com/sinnercode228/pulse-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/sinnercode228/pulse-analytics/actions/workflows/ci.yml)
-[![Pages](https://github.com/sinnercode228/pulse-analytics/actions/workflows/pages.yml/badge.svg)](https://sinnercode228.github.io/pulse-analytics/)
+Pulse — веб-аналитика без cookies и мониторинг аптайма в одном дашборде. Трекер весит 843 байта после минификации (560 в gzip) и шлёт просмотры в Fastify, а сервер сворачивает их в поминутные, почасовые и дневные роллапы в SQLite и стримит живую ленту по WebSocket.
 
-**Live demo:** https://sinnercode228.github.io/pulse-analytics/ — runs fully in the browser, no backend.
+![Дашборд Pulse: KPI, график трафика, realtime-лента, топ страниц и источников](docs/screenshots/dashboard.png)
 
-> **Демо-проект / Demo project.** «Pulse» и все сайты/сервисы в демо (Orbitly, Kestrel, Fernwood) — вымышленные; данные синтетические.
-> Pulse and every site/service in the demo are fictional; all data is synthetic.
+Демо без бэкенда: https://sinnercode228.github.io/pulse-analytics/
 
-![Dashboard](docs/screenshots/dashboard.png)
+В демо работает тот же движок из `packages/core`, что и на сервере. `DemoEngine` ([`web/src/data/demo/engine.ts`](web/src/data/demo/engine.ts)) прогоняет трафик через `RollupBuilder` и те же функции запросов, только хранилище у него в памяти, с тем же интерфейсом, что у SQLite-репозитория. История за 30 дней генерируется при первом запросе к сайту, дальше движок раз в секунду досчитывает новый трафик. Всё это крутится в Web Worker ([`DemoDataSource.ts`](web/src/data/demo/DemoDataSource.ts)), чтобы генерация и запросы не блокировали UI-поток. Сайты (Orbitly, Kestrel, Fernwood) и трафик в демо синтетические. С `?source=api&api=https://…` в адресе тот же дашборд ходит в настоящий API.
 
----
+Pulse написан на TypeScript в npm workspaces. `packages/core` — движок без зависимостей, общий для сервера и браузера; `server` — Fastify 5, `@fastify/websocket`, встроенный `node:sqlite` и esbuild для трекера; `web` — React 19, Vite, uPlot, TanStack Virtual и Zustand.
 
-## Русский
+## Путь одного просмотра
 
-**Pulse** — приватная (без cookies) веб-аналитика в реальном времени и мониторинг доступности в одном дашборде.
-Трекер < 1 КБ отправляет просмотры в Fastify, события сворачиваются в роллапы (минута / час / день) с HyperLogLog-скетчами уникальных посетителей,
-дашборд получает живой поток через WebSocket. Отдельный воркер проверяет HTTP-эндпоинты, ведёт инциденты и 90-дневную историю.
+Трекер ([`server/tracker/tracker.ts`](server/tracker/tracker.ts)) срабатывает после `load`, а в SPA ещё на `pushState`, `replaceState` и `popstate`. Тело уходит через `navigator.sendBeacon` строкой (`text/plain`), поэтому запрос обходится без CORS preflight; если `sendBeacon` нет или он вернул `false`, то же самое уходит через `fetch` с `keepalive`. `POST /api/event` ([`server/src/routes/ingest.ts`](server/src/routes/ingest.ts)) отвечает 404 на неизвестный сайт и 422 на URL не с домена сайта или его поддомена, и [`misc.test.ts`](packages/core/test/misc.test.ts) проверяет, что `acme.example.evil.test` за `acme.example` не сойдёт. Сверяется URL из тела запроса, так что от подделки это не защищает. Ботам (пустой или короче 10 символов User-Agent либо совпадение с `BOT_RE` из [`packages/core/src/ua.ts`](packages/core/src/ua.ts)) сервер отвечает 202, чтобы они не повторяли запрос, и выбрасывает событие.
 
-### Возможности
+Дальше `IngestPipeline` ([`server/src/ingest/pipeline.ts`](server/src/ingest/pipeline.ts)) складывает событие в `RollupBuilder` в памяти. Один просмотр трогает 18 строк буфера (три уровня на шесть срезов: total, page, referrer, country, device, browser), и новая строка появляется только для нового бакета или значения, иначе растут счётчики и скетч существующей. Буфер уходит в SQLite одной транзакцией раз в 2 секунды или при 5 000 строк, а любой запрос статистики сначала вызывает `flush()` ([`server/src/stats/service.ts`](server/src/stats/service.ts)), поэтому принятый просмотр сразу виден в отчётах; при падении процесса теряется то, что пришло после последнего сброса. Параллельно `LiveHub` ([`server/src/live/hub.ts`](server/src/live/hub.ts)) шлёт просмотр по WebSocket, и на дашборде обновляются живая лента и «Online now», число посетителей за последние 5 минут ([`active.ts`](packages/core/src/active.ts)). Графики и KPI дашборд перезапрашивает раз в 10 секунд, пока окно доходит до «сейчас» и вкладка видна.
 
-- **Дашборд** (React 19 + Vite + TypeScript, тёмная тема): посетители онлайн, KPI со сравнением с предыдущим периодом,
-  график на **uPlot**, топ страниц / источников / стран / устройств / браузеров.
-- **Виртуализированные таблицы** (`@tanstack/react-virtual`) — тысячи строк без лагов; поиск, сортировка, **экспорт в CSV**.
-- **Выбор периода**: пресеты (30 мин, сегодня, 24 ч, 7 д, 30 д), произвольный диапазон, сдвиг окна ←/→. Гранулярность выбирается автоматически.
-- **Realtime**: поминутные бары за 30 минут + живая лента просмотров.
-- **Uptime**: статус, спарклайн времени ответа за 24 ч, **тепловая карта за 90 дней**, p50/p95, инциденты, журнал проверок.
-- **Горячие клавиши**: `?` — справка, `A`/`U` — разделы, `1–5` — периоды, `←/→`, `S` — сайт, `/` — поиск, `E` — CSV, `L` — пауза.
-- **Демо на GitHub Pages без бэкенда**: тот же движок роллапов/запросов (`packages/core`) работает в **Web Worker**, генерирует 30 дней
-  реалистичного трафика (сезонность, всплески с HN/рассылок, Zipf-распределение страниц) и продолжает стримить события в реальном времени.
-  Переключение на реальный API — конфигом (`VITE_DATA_SOURCE=api`) или параметром `?source=api&api=https://…`.
+## Кого считать одним посетителем
 
-### Архитектура
+Трекер ничего не сохраняет в браузере, только читает флаг `localStorage.pulse_ignore`, которым можно исключить свои визиты. Id посетителя — `hash32("соль|сайт|ip|ua")`, посчитанный дважды, с seed 1 и 2; оба числа в base36 склеиваются в одну строку ([`server/src/ingest/parse.ts`](server/src/ingest/parse.ts)). Соль — 16 случайных байт на UTC-сутки в таблице `salts`; когда создаётся новая, всё старше вчерашней удаляется ([`server/src/ingest/salt.ts`](server/src/ingest/salt.ts)). Соль лежит в базе, а не в памяти процесса, и перезапуск посреди дня не меняет id. IP и строка User-Agent в базу не пишутся, только хэш, а страна берётся из заголовков CDN вроде `cf-ipcountry`, своей геолокации по IP нет. В логи IP всё же попадает, потому что стандартный лог запросов Fastify (включён в [`server/src/index.ts`](server/src/index.ts)) пишет `remoteAddress`.
 
-```
-packages/core   изоморфный движок: HyperLogLog, time-buckets с часовыми поясами, RollupBuilder,
-                RollupRepository (merge-on-upsert), query-слой, математика аптайма, синтетические генераторы
-server/         Fastify 5: POST /api/event, REST-статистика, WebSocket /api/live, CSV-экспорт, admin API,
-                SQLite (встроенный node:sqlite, WAL), uptime-checker (inline или отдельный процесс), трекер p.js
-web/            React-дашборд; DataSource = ApiDataSource (HTTP+WS) | DemoDataSource (Web Worker)
-```
+Из-за суточной соли один и тот же человек в разные дни получает разные id, и «Unique visitors» за диапазон в несколько дней ближе к числу посетитель-дней, чем к числу людей. Ещё соль меняется в полночь UTC, а дневные бакеты режутся по полуночи часового пояса сайта. Если пояс не UTC (по умолчанию он UTC), посетитель, заходивший до и после полуночи UTC в пределах одних местных суток, попадёт в дневной бакет дважды.
 
-- **Путь записи:** трекер → `POST /api/event` (text/plain, без CORS preflight) → анонимный ID посетителя
-  `hash(суточная соль, сайт, IP, UA)` (соль ротируется, IP не хранится) → `RollupBuilder` в памяти → пакетный flush в SQLite.
-- **Хранилище:** таблица `rollups` работает как AggregatingMergeTree — HLL-скетчи мёрджатся при upsert,
-  поэтому «уникальные посетители» корректны для любого диапазона. TTL по уровням: минуты — 2 дня, часы — 35 дней, дни — бессрочно.
-- **Чтение:** запросы делают `flush()` перед чтением (read-your-writes), диапазоны выравниваются по бакетам,
-  текущий и предыдущий период не пересекаются.
-- **Uptime:** `performCheck` (таймауты, сетевые ошибки → failed check) → сырые проверки + дневные роллапы + state-machine инцидентов.
+## Скетч в каждой строке роллапа
 
-### Запуск
+Посетителей нельзя просто сложить между бакетами, поэтому в каждой строке роллапа лежит HyperLogLog-скетч ([`packages/core/src/hll.ts`](packages/core/src/hll.ts)): precision 11, 2048 регистров, ~2,3% стандартной ошибки. Пока хэшей не больше 512, скетч хранит их точным множеством 32-битных значений, как sparse-режим в HLL++, а у строк вида «одна страница за один час» так обычно и бывает. На 513-м он переходит в плотные регистры, потому что 512 значений по 4 байта занимают столько же, сколько 2048 однобайтовых регистров (2 КиБ). В SQLite скетч лежит в BLOB-колонке. Тесты в [`packages/core/test/hll.test.ts`](packages/core/test/hll.test.ts) требуют, чтобы 300 значений в sparse-режиме считались точно, на 100 000 ошибка была меньше 3%, а объединение двух множеств по 4 000 с пересечением в 2 000 давало 6 000 с точностью до 4%.
 
-Требования: Node ≥ 22.13 (используется встроенный `node:sqlite`; проверено на Node 25).
+Скетчи мёржатся, и таблица `rollups` ведёт себя как `AggregatingMergeTree` с `uniqState`/`uniqMerge` в ClickHouse. `upsert` читает существующую строку, объединяет скетчи, складывает счётчики и пишет обратно внутри одной транзакции ([`server/src/db/rollup-repo.ts`](server/src/db/rollup-repo.ts)), поэтому flush может писать частичные агрегаты сколько угодно раз. Тест [`server/test/rollup-repo.test.ts`](server/test/rollup-repo.test.ts) пишет двое суток синтетики в SQLite пачками по 1 500 событий, а в in-memory хранилище одной пачкой, и сверяет summary, timeseries и breakdown через `toEqual`.
+
+Хэш — MurmurHash3 (x86, 32 бит) на `Math.imul` ([`packages/core/src/hash.ts`](packages/core/src/hash.ts)). В Node и в браузере он даёт одно и то же, и из одних данных сервер и демо строят побайтно одинаковые скетчи.
+
+## Три уровня хранения
+
+Сырые просмотры не хранятся совсем, только роллапы ([`packages/core/src/store.ts`](packages/core/src/store.ts)):
+
+| Уровень | Сколько хранится | Выбирается автоматически, если |
+| --- | --- | --- |
+| `minute` | 2 дня | окно ≤ 3 ч 1 мин и начинается не раньше чем 2 дня назад |
+| `hour` | 35 дней | окно ≤ 8 дней 1 ч и начинается не раньше чем 35 дней назад |
+| `day` | без срока | во всех остальных случаях |
+
+`chooseInterval` ([`packages/core/src/query.ts`](packages/core/src/query.ts)) берёт самый мелкий уровень, при котором на графике не больше ~200 точек и данные ещё не удалены. Чистка идёт раз в час и оставляет лишний час, чтобы окно, начинающееся ровно на границе хранения, не потеряло первый бакет.
+
+Каждая строка роллапа описывает одно измерение, поэтому разрез возможен только по одному за раз. «Страница × страна» или новое измерение задним числом не посчитать, сырых событий для этого нет.
+
+## Где время врёт
+
+### Округление диапазона
+
+Оба конца окна округляются вниз до границы бакета ([`packages/core/src/query.ts`](packages/core/src/query.ts)), и текущий с предыдущим периодом никогда не делят один бакет. Окно, которое доходит до «сейчас», сохраняет незаконченный бакет, иначе свежие данные пропали бы с графика.
+
+### +3000% к периоду, которого не было
+
+KPI сравниваются с окном той же длины прямо перед текущим. Если истории на это окно не хватает, дельта выходит бессмысленной. Пример из комментария к `queryPreviousSummary`:
+
+> Without this, a 30-day view over a site with 31 days of data compares against a single day and reports +3000%.
+
+Для окон от суток и длиннее я сначала смотрю первую десятую часть предыдущего периода. Если там ни одного просмотра, возвращается пустая сводка, и дашборд пишет «no previous data» вместо дельты. Эвристика грубая. Сайт, у которого в эти дни и правда не было трафика, тоже получит «no previous data».
+
+### Сутки по 23 и 25 часов
+
+Дневной бакет начинается в местную полночь часового пояса сайта ([`packages/core/src/time.ts`](packages/core/src/time.ts)). Для следующего бакета код прибавляет 26 часов (даже при переводе часов эта точка попадает в следующие местные сутки) и от неё снова берёт полночь. Тест в [`packages/core/test/time.test.ts`](packages/core/test/time.test.ts) проверяет 23- и 25-часовые дни в `America/New_York`.
+
+## Аптайм и второй процесс на той же базе
+
+![Страница аптайма: мониторы, 90-дневная полоса, инциденты](docs/screenshots/uptime.png)
+
+`performCheck` ([`server/src/uptime/checker.ts`](server/src/uptime/checker.ts)) ловит сетевые ошибки и таймауты и записывает их как неудачную проверку. По умолчанию монитор проверяется раз в минуту с таймаутом 10 секунд, ответ дольше 1 000 мс считается degraded. Сырые проверки живут 7 дней, по дням есть сводка `uptime_daily`, из неё строится полоса за 90 дней с порогами 99,99% / 99% / 95%.
+
+В демо монитор «Webhook relay» по сценарию падает с HTTP 500 примерно через минуту после первого открытия страницы аптайма и через 6 минут поднимается ([`packages/core/src/synth/uptime.ts`](packages/core/src/synth/uptime.ts)). На нём видно, как инцидент открывается и закрывается.
+
+Проверки идут внутри API (`UPTIME_MODE=inline`) или отдельным процессом [`uptime-worker`](server/src/uptime-worker.ts) на том же файле базы. Встроенный `node:sqlite` не требует сборки нативного аддона, а база открывается в режиме WAL, чтобы API и воркер аптайма работали с одним файлом (шапка [`server/src/db/database.ts`](server/src/db/database.ts)). Вместе с WAL выставляются `synchronous = NORMAL` и `busy_timeout = 5000`, схема мигрирует через `PRAGMA user_version`. У отдельного воркера нет `LiveHub`, поэтому в `docker compose` страница аптайма обновляется только перезапросом раз в 10 секунд.
+
+## Что ещё не сделано
+
+- Алертов нет, упавший монитор видно только на дашборде. Инцидент открывает первая неудачная проверка и закрывает первая успешная ([`packages/core/src/uptime.ts`](packages/core/src/uptime.ts)), поэтому один таймаут даёт отдельный инцидент.
+- У WebSocket нет ping и backpressure. Клиент переподключается через 1 с × 2ⁿ (до 30 с) без jitter, события за время разрыва не досылаются.
+- На `/api/event` нет rate limit. Читающий API открыт без авторизации, `ADMIN_TOKEN` закрывает только `POST /api/admin/*`.
+- `TRUST_PROXY` по умолчанию включён. Если перед сервером нет прокси, клиент может подставить свой `X-Forwarded-For`, и этот адрес уйдёт в хэш посетителя.
+
+## Свой экземпляр
+
+Node 24 (`.nvmrc`) или 22.18+: `build:tracker` импортирует `.ts` обычным `node`, а type stripping включён по умолчанию с 22.18.
 
 ```bash
-npm install
-npm run dev                 # только дашборд в демо-режиме: http://localhost:5173
+npm ci
+npm run dev                          # только дашборд на демо-данных: http://localhost:5173
+
+# с бэкендом
+npm run seed                         # 30 дней синтетики в server/data/pulse.db: 3 сайта, 6 мониторов на паузе, self-check API
+npm run dev:api                      # API и трекер (/p.js) на :8787
+VITE_DATA_SOURCE=api npm run dev     # дашборд; Vite проксирует /api и WebSocket на :8787
+npm run simulate -w @pulse/server    # живой синтетический трафик через настоящий POST /api/event
+
+# или в Docker
+docker compose up -d --build         # API + дашборд + трекер на :8787, аптайм отдельным сервисом
+docker compose run --rm seed         # по желанию: 30 дней синтетики в тот же volume
 ```
 
-С реальным бэкендом:
+Чтобы локально проверки шли отдельным процессом, API запускается с `UPTIME_MODE=off`, а рядом `npm run worker:uptime -w @pulse/server`.
 
-```bash
-npm run seed                # 30 дней синтетической истории в ./server/data/pulse.db
-npm run dev:api             # API на :8787 (трекер: http://localhost:8787/p.js)
-VITE_DATA_SOURCE=api npm run dev   # дашборд проксирует /api и WebSocket на :8787
-npm run simulate -w @pulse/server  # (опц.) живой синтетический трафик через настоящий /api/event
-```
-
-Подключение трекера на сайт:
+Трекер на сайте:
 
 ```html
-<script defer src="https://pulse.example.com/p.js" data-site="my-site"></script>
+<script defer src="https://pulse.example/p.js" data-site="my-site"></script>
 ```
 
-Docker (API + дашборд + трекер на :8787, uptime-воркер отдельным сервисом):
+Сайт заводится через `POST /api/admin/sites` с `Authorization: Bearer <ADMIN_TOKEN>`; без `ADMIN_TOKEN` админ-роуты выключены. Сервер берёт переменные только из окружения процесса и `.env` сам не читает; в Docker `ADMIN_TOKEN` из `.env` подставляет compose. Переменные перечислены в [`.env.example`](.env.example), кроме `TRUST_PROXY`: он читается в [`server/src/config.ts`](server/src/config.ts).
 
-```bash
-docker compose up -d --build
-docker compose run --rm seed      # опционально: демо-данные
-```
+## Что проверяет CI
 
-Проверки: `npm run check` (lint + prettier + typecheck + тесты + сборка). Переменные окружения — в [.env.example](.env.example).
-
-### Тесты
-
-**97 тестов** (Vitest), Docker не нужен:
-
-- `packages/core` (52): HyperLogLog (точность, merge, сериализация), часовые пояса/DST, роллапы, query-слой, аптайм, генераторы.
-- `server` (26): API через `fastify.inject` (приём событий, боты, валидация, сводка, таймсерии, разбивки, CSV, realtime, admin-токен),
-  WebSocket live-feed на реальном сокете, SQLite-репозиторий (паритет с in-memory, merge HLL, TTL), uptime-чекер,
-  **бюджет размера трекера** (≤ 2048 Б минифицированный; сейчас ~840 Б / ~560 Б gzip) и поведение трекера в песочнице (SPA-навигация, opt-out).
-- `web` (19): движок демо в воркере, компоненты (виртуальная таблица, KPI, тепловая карта), хоткеи, API-клиент, утилиты.
-
-### Демо на GitHub Pages
-
-Workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) собирает `web/` с `base: '/<repo>/'` и публикует
-через `actions/upload-pages-artifact` + `actions/deploy-pages`. В настройках репозитория: **Settings → Pages → Source: GitHub Actions**.
-
----
-
-## English
-
-**Pulse** is cookieless, real-time web analytics plus uptime monitoring in one dashboard. A < 1 KB tracker sends pageviews to
-a Fastify ingestion API; events are folded into minute/hour/day rollups with HyperLogLog visitor sketches, and the dashboard
-receives a live stream over WebSocket. A checker worker probes HTTP endpoints, tracks incidents and keeps 90 days of history.
-
-### Features
-
-- **Dashboard** (React 19 + Vite + TypeScript, dark UI): visitors online, KPIs with period-over-period change,
-  **uPlot** time-series, top pages / referrers / countries / devices / browsers.
-- **Virtualized tables** with search, sortable columns and **CSV export**.
-- **Date-range picker**: presets, custom range, ←/→ window shifting; minute/hour/day granularity is picked automatically.
-- **Realtime** per-minute bars and a live pageview feed.
-- **Uptime**: status, 24h response-time sparklines, **90-day status heatmap**, p50/p95, incidents, check log.
-- **Keyboard shortcuts** — press `?` in the app.
-- **Backend-free Pages demo**: the very same rollup/query engine (`packages/core`) runs in a **Web Worker**, backfills 30 days of
-  realistic synthetic traffic (weekly/diurnal seasonality per time zone, launch spikes, Zipf page popularity, log-normal load times)
-  and keeps streaming events live. Switch to the real API with `VITE_DATA_SOURCE=api` or `?source=api&api=https://…`.
-
-### Architecture
-
-- **Write path:** tracker → `POST /api/event` (text/plain beacon, no CORS preflight) → anonymous visitor id
-  `hash(daily salt, site, IP, UA)` (salt rotates daily, IPs are never stored) → in-memory `RollupBuilder` → batched flush to SQLite.
-- **Storage:** the `rollups` table behaves like an AggregatingMergeTree — HLL sketches merge on upsert, so unique visitors are
-  correct for any range. Tiered TTL: minute 2 days, hour 35 days, day forever. SQLite via the built-in `node:sqlite` (no native addon), WAL mode.
-- **Read path:** queries flush first (read-your-writes); ranges snap to bucket boundaries so the current and previous period never overlap.
-- **Uptime:** `performCheck` (timeouts and network errors become failed checks) → raw checks + daily rollups + incident state machine;
-  runs inline in the API (`UPTIME_MODE=inline`) or as a separate `uptime-worker` process sharing the database.
-- **Frontend:** a single `DataSource` interface with two implementations — `ApiDataSource` (HTTP + reconnecting WebSocket) and
-  `DemoDataSource` (typed RPC to the worker). Zustand for UI state, URL hash for linkable views (`#/uptime/<monitor>`).
-
-### Getting started
-
-```bash
-npm install
-npm run dev                         # demo-mode dashboard at http://localhost:5173
-npm run seed && npm run dev:api     # API on :8787 with 30 days of synthetic history
-VITE_DATA_SOURCE=api npm run dev    # dashboard against the API (Vite proxies /api + WebSocket)
-docker compose up -d --build        # API + dashboard + tracker on :8787, separate uptime worker
-```
-
-API overview: `GET /api/sites`, `GET /api/sites/:id/{summary,timeseries,breakdown,realtime,export.csv}?from&to`,
-`GET /api/monitors`, `GET /api/monitors/:id`, `GET /api/live?site=` (WebSocket), `POST /api/event`,
-`POST /api/admin/{sites,monitors}` (Bearer `ADMIN_TOKEN`), `GET /p.js`, `GET /api/health`.
-
-### Tests & quality
-
-97 Vitest tests (core 52 · server 26 · web 19), no Docker required: `npm test`. `npm run check` runs ESLint, Prettier,
-TypeScript (strict, `noUncheckedIndexedAccess`), tests and all builds; the same steps run in [CI](.github/workflows/ci.yml) on Node 22 and 24.
-The tracker has a hard **2 KB** size budget enforced by both the build and a test (currently ~840 B minified, ~560 B gzipped).
-
-### Screenshots
-
-| Uptime | Mobile |
-| --- | --- |
-| ![Uptime](docs/screenshots/uptime.png) | ![Mobile](docs/screenshots/mobile.png) |
-
-### Stack
-
-TypeScript · React 19 · Vite · uPlot · TanStack Virtual · Zustand · Fastify 5 · @fastify/websocket · node:sqlite · esbuild · Vitest · Testing Library · Docker · GitHub Actions
-
----
-
-Author: [sinnercode228](https://github.com/sinnercode228) · Telegram [@sinnercode](https://t.me/sinnercode) · MIT License
+`npm test` гоняет 97 тестов на Vitest: 52 в `packages/core` (HLL, часовые пояса и DST, роллапы, запросы, аптайм, генераторы), 26 в `server` (API через `fastify.inject`, WebSocket на настоящем сокете, паритет SQLite с in-memory, трекер в `node:vm`, CSV с нейтрализацией формул) и 19 в `web` (демо-движок, компоненты, хоткеи, API-клиент, утилиты). `npm run check` — это ESLint с `--max-warnings=0`, Prettier, `tsc`, тесты и сборка; те же шаги идут в CI на Node 22 и 24. Сборка падает, если трекер больше 2 048 байт, а тест вдобавок требует меньше 1 024 байт в gzip.
