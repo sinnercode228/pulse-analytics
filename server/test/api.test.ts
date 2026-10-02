@@ -1,6 +1,8 @@
 import {
+  DAY,
   HOUR,
   MINUTE,
+  SECOND,
   type BreakdownResponse,
   type RealtimeResponse,
   type SummaryResponse,
@@ -111,6 +113,23 @@ describe('stats API', () => {
     expect(minute.json<TimeseriesResponse>().points.at(-2)?.pageviews ?? 0).toBeGreaterThanOrEqual(
       0,
     );
+  });
+
+  it('answers 400 when a forced interval needs too many buckets', async () => {
+    const minute = (from: number, to: number) =>
+      t.app.inject(`/api/sites/demo/timeseries?from=${from}&to=${to}&interval=minute`);
+    // The ranges from issue #1: 6 days worked, 8 days answered 500.
+    expect((await minute(NOW - 6 * DAY, NOW)).statusCode).toBe(200);
+    const tooLong = await minute(NOW - 8 * DAY, NOW);
+    expect(tooLong.statusCode).toBe(400);
+    expect(tooLong.json()).toEqual({ error: expect.stringContaining('interval=minute') });
+    // Exact boundary. `from` is off the minute grid and `to` is past now, so the
+    // series gets an extra partial bucket at the front and nothing is trimmed at the end.
+    const to = NOW + 30 * SECOND;
+    const longest = await minute(to - 9_999 * MINUTE, to);
+    expect(longest.statusCode).toBe(200);
+    expect(longest.json<TimeseriesResponse>().points).toHaveLength(10_000);
+    expect((await minute(to - 10_000 * MINUTE, to)).statusCode).toBe(400);
   });
 
   it('breaks down by page, referrer, country and device', async () => {

@@ -86,6 +86,9 @@ export function nextBucket(bucket: number, granularity: Granularity, timeZone = 
   }
 }
 
+/** Most buckets {@link bucketsBetween} returns before it throws. */
+export const MAX_BUCKETS = 10_000;
+
 /** Bucket starts covering the half-open interval [from, to). */
 export function bucketsBetween(
   from: number,
@@ -100,7 +103,8 @@ export function bucketsBetween(
     b = nextBucket(b, granularity, timeZone)
   ) {
     out.push(b);
-    if (out.length > 10_000) throw new RangeError('Range too large for the chosen granularity');
+    if (out.length > MAX_BUCKETS)
+      throw new RangeError('Range too large for the chosen granularity');
   }
   return out;
 }
