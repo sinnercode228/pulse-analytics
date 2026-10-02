@@ -1,4 +1,12 @@
-import { DAY, DIMENSIONS, type Dimension, type Granularity } from '@pulse/core';
+import {
+  DAY,
+  DIMENSIONS,
+  HOUR,
+  MAX_BUCKETS,
+  MINUTE,
+  type Dimension,
+  type Granularity,
+} from '@pulse/core';
 
 export const rangeQuerySchema = {
   type: 'object',
@@ -60,4 +68,18 @@ export function resolveRange(q: RangeQuerystring, now: number): { from: number; 
   const from = q.from ?? to - DAY;
   if (from >= to) return { from: to - DAY, to };
   return { from: Math.max(from, to - 400 * DAY), to };
+}
+
+const BUCKET_MS: Record<Granularity, number> = { minute: MINUTE, hour: HOUR, day: DAY };
+
+/**
+ * Longest range, in buckets, that a forced `interval` may cover. One less than
+ * MAX_BUCKETS because `from` snaps down to a bucket start, so a range n buckets
+ * long can touch n + 1 of them. With the 400-day clamp above, only `minute` can
+ * hit it.
+ */
+export const MAX_INTERVAL_SPAN = MAX_BUCKETS - 1;
+
+export function fitsInterval(range: { from: number; to: number }, interval: Granularity): boolean {
+  return range.to - range.from <= MAX_INTERVAL_SPAN * BUCKET_MS[interval];
 }

@@ -2,7 +2,9 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import type { AppContext } from '../context.js';
 import { toCsv } from '../stats/csv.js';
 import {
+  MAX_INTERVAL_SPAN,
   breakdownQuerySchema,
+  fitsInterval,
   rangeQuerySchema,
   resolveRange,
   siteParamsSchema,
@@ -38,11 +40,14 @@ export function statsRoutes(app: FastifyInstance, ctx: AppContext): void {
     { schema: { params: siteParamsSchema, querystring: timeseriesQuerySchema } },
     async (req, reply) => {
       if (!ensureSite(req.params.siteId, reply)) return reply;
-      return stats.timeseries(
-        req.params.siteId,
-        resolveRange(req.query, ctx.now()),
-        req.query.interval,
-      );
+      const range = resolveRange(req.query, ctx.now());
+      const { interval } = req.query;
+      if (interval && !fitsInterval(range, interval)) {
+        return reply.code(400).send({
+          error: `interval=${interval} covers at most ${MAX_INTERVAL_SPAN} ${interval}s; use a shorter range or a coarser interval`,
+        });
+      }
+      return stats.timeseries(req.params.siteId, range, interval);
     },
   );
 
