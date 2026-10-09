@@ -10,6 +10,27 @@ None of the data is real. Orbitly, Kestrel and Fernwood are invented sites, the 
 
 [![CI](https://github.com/sinnercode228/pulse-analytics/actions/workflows/ci.yml/badge.svg)](https://github.com/sinnercode228/pulse-analytics/actions/workflows/ci.yml)
 
+## From p.js to the live feed
+
+A pageview leaves `IngestPipeline` two ways: right away to the site's WebSocket subscribers through `LiveHub`, and into the rollup buffer that is written to SQLite every 2 s. Uptime checks run on their own timers in `UptimeService`, inside the API process by default or in `uptime-worker` on the same database file; only the in-process service pushes checks to the live feed. The text version with file paths is under [How it fits together](#how-it-fits-together).
+
+```mermaid
+flowchart TD
+  T["p.js on the tracked page"] -->|"POST /api/event"| I["ingest route, parse.ts"]
+  I --> P["IngestPipeline"]
+  P -->|"publish"| H["LiveHub"]
+  H -->|"WS /api/live"| D["Dashboard"]
+  P -->|"flush every 2 s"| R[("SQLite: rollups")]
+  R --> S["StatsService, query.ts"]
+  S -->|"GET /api/sites/:siteId/..."| D
+  U["UptimeService: inline or uptime-worker"] -->|"performCheck"| M["Monitored URL"]
+  U --> C[("SQLite: checks, uptime_daily, incidents")]
+  U -.->|"check, inline mode only"| H
+  C -->|"GET /api/monitors"| D
+```
+
+Write-up on how unique visitors are counted without cookies: [How Pulse counts unique visitors with a daily salt and a sparse-to-dense HyperLogLog](https://github.com/sinnercode228/sinnercode228/blob/main/notes/pulse-hyperloglog.md).
+
 ## Numbers
 
 I measured everything in this section on this checkout on 2026-10-02 (Node 25.8.2, esbuild 0.28.2). Each figure names the code it comes from, and each measured one comes with the command that reproduces it.
@@ -95,9 +116,9 @@ npx vitest run packages/core/test/query.test.ts server/test/rollup-repo.test.ts 
 - A monitor created through the admin API is checked every 60 s with a 10 s timeout and counts as degraded above 1,000 ms; the allowed ranges are 30 to 3,600 s and 1 to 30 s ([`admin.ts:27-28`](server/src/routes/admin.ts#L27-L28), [`:83-89`](server/src/routes/admin.ts#L83-L89)). `performCheck` never throws: network errors and timeouts become failed checks ([`checker.ts`](server/src/uptime/checker.ts)).
 - "Online now" is the number of distinct visitors in the last 5 minutes ([`active.ts:11`](packages/core/src/active.ts#L11)). The realtime panel shows 30 one-minute bars and the last 50 events ([`service.ts:69-81`](server/src/stats/service.ts#L69-L81), [`pipeline.ts:44`](server/src/ingest/pipeline.ts#L44)). The WebSocket pushes the active count every 10 s ([`live.ts:19-22`](server/src/routes/live.ts#L19-L22)), and the dashboard refetches charts and KPIs every 10 s while the window reaches "now" and the tab is visible ([`App.tsx:16`](web/src/App.tsx#L16), [`:66-72`](web/src/App.tsx#L66-L72)).
 
-### Tests: 97
+### Tests: 98
 
-`npm test` runs 97 Vitest tests in 16 files: 52 in `packages/core` (HLL, time zones and DST, rollups, queries, uptime, generators), 26 in `server` (the API through `fastify.inject` on an in-memory `node:sqlite` database, a WebSocket on a real socket, SQLite vs. in-memory parity, the tracker in `node:vm`, CSV with formula neutralization) and 19 in `web` under jsdom (demo engine, components, hotkeys, API client, utilities). Vitest reported 1.8 s for the run on my machine. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs ESLint with `--max-warnings=0`, Prettier, `tsc` in strict mode with `noUncheckedIndexedAccess`, the tests and the build on Node 22 and 24; `npm run check` runs the same steps locally.
+`npm test` runs 98 Vitest tests in 16 files: 52 in `packages/core` (HLL, time zones and DST, rollups, queries, uptime, generators), 27 in `server` (the API through `fastify.inject` on an in-memory `node:sqlite` database, a WebSocket on a real socket, SQLite vs. in-memory parity, the tracker in `node:vm`, CSV with formula neutralization) and 19 in `web` under jsdom (demo engine, components, hotkeys, API client, utilities). Vitest reported 1.8 s for the run on my machine. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs ESLint with `--max-warnings=0`, Prettier, `tsc` in strict mode with `noUncheckedIndexedAccess`, the tests and the build on Node 22 and 24; `npm run check` runs the same steps locally.
 
 ## How it fits together
 
@@ -256,13 +277,15 @@ Pulse — веб-аналитика без cookies и мониторинг до�
 - **Уникальные посетители: стандартная ошибка 2,3 %, точный счёт до 512.** HyperLogLog с precision 11, 2 048 регистров ([`packages/core/src/hll.ts`](packages/core/src/hll.ts)). Пока хэшей не больше 512, скетч хранит их точным множеством, как sparse-режим в HLL++; на 513-м переходит в плотные регистры. Замер на 50 наборах id на размер: rms 1,78 % при 1 000, 3,27 % при 5 000, 1,98 % при 10 000, 2,36 % при 100 000; худшие случаи от 4,9 до 7,9 %. Провал около 5 000 — стык линейного счёта и оценки HLL без коррекции смещения (ограничение 5).
 - **Роллапы: минута / час / день, хранение 2 дня / 35 дней / бессрочно** ([`store.ts:8-12`](packages/core/src/store.ts#L8-L12)). Уровень выбирается так, чтобы на графике было не больше примерно 200 точек: окно до 3 ч 1 мин — минуты, до 8 дней 1 ч — часы, дальше дни ([`query.ts:61-71`](packages/core/src/query.ts#L61-L71)). Один просмотр трогает 18 строк буфера (6 срезов × 3 уровня); буфер уходит в SQLite одной транзакцией раз в 2 с или при 5 000 строк, а любой запрос статистики сначала вызывает `flush()`. Проверить: `npx vitest run packages/core/test/query.test.ts server/test/rollup-repo.test.ts`.
 - **Аптайм:** сырые проверки хранятся 7 дней, полоса за 90 дней строится из `uptime_daily` с порогами 99,99 / 99 / 95 %, спарклайн за сутки — 96 корзин по 15 минут ([`packages/core/src/uptime.ts`](packages/core/src/uptime.ts)).
-- **Тесты: 97** в 16 файлах: 52 в `packages/core`, 26 в `server`, 19 в `web`. CI гоняет ESLint, Prettier, `tsc`, тесты и сборку на Node 22 и 24; локально то же делает `npm run check`.
+- **Тесты: 98** в 16 файлах: 52 в `packages/core`, 27 в `server`, 19 в `web`. CI гоняет ESLint, Prettier, `tsc`, тесты и сборку на Node 22 и 24; локально то же делает `npm run check`.
 
 Схема потока данных и разборы (путь одного просмотра, слияние скетчей, часовые пояса, аптайм во втором процессе, демо без сервера) — в английской части.
 
 ### Кого считать посетителем
 
 Трекер ничего не хранит в браузере. Id посетителя — `hash32("соль|сайт|ip|ua")`, посчитанный дважды, с seed 1 и 2; оба числа в base36 склеиваются в одну строку ([`parse.ts:53-56`](server/src/ingest/parse.ts#L53-L56)). Соль — 16 случайных байт на UTC-сутки в таблице `salts`; в базе одновременно лежат сегодняшняя и вчерашняя, всё старше удаляется ([`salt.ts:25`](server/src/ingest/salt.ts#L25)). IP и User-Agent в базу не пишутся, только хэш, а страна берётся из заголовков CDN, своей геолокации по IP нет. В логи IP всё же попадает: стандартный лог запросов Fastify пишет `remoteAddress`. Из-за суточной соли «Unique visitors» за несколько дней ближе к числу посетитель-дней, чем к числу людей.
+
+Разбор с кодом, замерами и тестами: [Как Pulse считает посетителей через суточную соль и HyperLogLog](https://github.com/sinnercode228/sinnercode228/blob/main/notes/pulse-hyperloglog.ru.md).
 
 ### Запуск
 
