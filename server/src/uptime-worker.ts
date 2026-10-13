@@ -20,8 +20,8 @@ console.log(
   `[uptime-worker] checking ${new UptimeRepository(db).listMonitors().filter((m) => !m.paused).length} monitors`,
 );
 
-// Pick up monitors added through the admin API.
-setInterval(() => service.start(), 5 * 60 * 1000);
+// Pick up monitors added or changed through the admin API; the rest keep their schedule.
+setInterval(() => service.sync(), 5 * 60 * 1000);
 
 for (const signal of ['SIGINT', 'SIGTERM'] as const) {
   process.once(signal, () => {

@@ -88,7 +88,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppContext): void {
         ...req.body,
       };
       ctx.uptimeRepo.upsertMonitor(monitor, false, ctx.now());
-      if (ctx.uptime.running) ctx.uptime.start();
+      if (ctx.uptime.running) ctx.uptime.sync();
       return reply.code(201).send(monitor);
     },
   );
