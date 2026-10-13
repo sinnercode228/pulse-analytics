@@ -4,7 +4,9 @@ import type { Db } from '../db/database.js';
 
 /**
  * Daily-rotating salt for anonymous visitor ids (no cookies, no stored IPs).
- * Yesterday's salt is deleted, so ids can never be linked across days.
+ * Each UTC day gets its own salt, so the same visitor has a different id every
+ * day. Today's and yesterday's salts are kept; when a new day's salt is
+ * created, older ones are deleted.
  */
 export class SaltStore {
   private cached: { day: number; salt: string } | null = null;

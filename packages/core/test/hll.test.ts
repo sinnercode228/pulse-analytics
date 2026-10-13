@@ -25,6 +25,19 @@ describe('Hll', () => {
     expect(h.count()).toBe(300);
   });
 
+  it('is exact at 512 distinct hashes and switches to dense registers at 513', () => {
+    const values = ids(513, 'edge');
+    expect(new Set(values.map((v) => hash32(v))).size).toBe(513);
+    const h = Hll.from(values.slice(0, 512));
+    expect(h.isSparse).toBe(true);
+    expect(h.count()).toBe(512);
+    expect(h.toBytes().length).toBe(1 + 512 * 4);
+    h.addString(values[512]!);
+    expect(h.isSparse).toBe(false);
+    expect(h.toBytes().length).toBe((1 << HLL_PRECISION) + 1);
+    expect(Math.abs(h.count() - 513) / 513).toBeLessThan(0.05);
+  });
+
   it('switches to dense registers and stays within 3% at 100k', () => {
     const h = Hll.from(ids(100_000));
     expect(h.isSparse).toBe(false);
