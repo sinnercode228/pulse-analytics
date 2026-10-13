@@ -115,6 +115,24 @@ describe('stats API', () => {
     );
   });
 
+  it('keeps the bucket in progress when `to` trails the server clock', async () => {
+    // The browser stamped `to` a few ms or seconds before the server read its clock.
+    t.clock.now = NOW + 40 * SECOND;
+    for (const lag of [5, 3 * SECOND]) {
+      const to = t.clock.now - lag;
+      const day = (
+        await t.app.inject(`/api/sites/demo/timeseries?from=${to - 24 * HOUR}&to=${to}`)
+      ).json<TimeseriesResponse>();
+      expect(day.interval).toBe('hour');
+      expect(day.points.at(-1)).toMatchObject({ t: NOW - 30 * MINUTE, pageviews: 4 });
+      const summary = (
+        await t.app.inject(`/api/sites/demo/summary?from=${to - 30 * MINUTE}&to=${to}`)
+      ).json<SummaryResponse>();
+      expect(summary.interval).toBe('minute');
+      expect(summary.current.pageviews).toBe(4);
+    }
+  });
+
   it('answers 400 when a forced interval needs too many buckets', async () => {
     const minute = (from: number, to: number) =>
       t.app.inject(`/api/sites/demo/timeseries?from=${from}&to=${to}&interval=minute`);

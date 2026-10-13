@@ -76,9 +76,21 @@ export function previousRange<T extends { from: number; to: number }>(q: T): T {
 }
 
 /**
+ * How far `to` may trail `now` and still count as reaching "now". The browser
+ * stamps `to` before the request goes out and the server (or the demo worker)
+ * reads `now` later, so a live preset arrives a few ms to seconds behind.
+ */
+export const LIVE_TOLERANCE = MINUTE;
+
+/** A window whose end is at, after, or within {@link LIVE_TOLERANCE} of `now`. */
+export function isLiveRange(to: number, now: number): boolean {
+  return to >= now - LIVE_TOLERANCE;
+}
+
+/**
  * Snaps a range onto bucket boundaries. Both ends snap down, so adjacent
  * ranges (current vs previous period) never share a bucket — except that a
- * window reaching "now" keeps the in-progress bucket, so live data shows up.
+ * live window keeps the in-progress bucket, so live data shows up.
  */
 function resolve(
   repo: RollupRepository,
@@ -88,7 +100,7 @@ function resolve(
   const now = q.now ?? Date.now();
   const interval = q.interval ?? chooseInterval(q.from, q.to, repo.retention, now);
   const from = bucketStart(q.from, interval, tz);
-  const to = q.to >= now ? q.to : bucketStart(q.to, interval, tz);
+  const to = isLiveRange(q.to, now) ? q.to : bucketStart(q.to, interval, tz);
   return { interval, tz, from, to: Math.max(from, to) };
 }
 

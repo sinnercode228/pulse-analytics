@@ -5,6 +5,7 @@ import {
   MINUTE,
   MemoryRollupStore,
   RollupBuilder,
+  SECOND,
   SERVER_RETENTION,
   chooseInterval,
   EMPTY_SUMMARY,
@@ -122,5 +123,56 @@ describe('queryPreviousSummary', () => {
     // Last 36h: the previous 36h are only partly covered (data begins 48h ago).
     const partial = { siteId: 's1', from: NOW - 36 * HOUR, to: NOW, now: NOW };
     expect(queryPreviousSummary(seed(), partial)).toEqual(EMPTY_SUMMARY);
+  });
+});
+
+describe('live windows', () => {
+  // The browser stamps `to`; the server reads `now` a little later.
+  const now = Date.parse('2026-06-10T15:20:40Z');
+  const event = (ts: number, visitorId: string): PageviewEvent => ({
+    siteId: 's1',
+    ts,
+    visitorId,
+    path: '/',
+    referrer: '(direct)',
+    country: 'DE',
+    device: 'desktop',
+    browser: 'Chrome',
+  });
+  const store = new MemoryRollupStore();
+  store.upsert(
+    new RollupBuilder()
+      .addAll([
+        event(now - 30 * SECOND, 'current-minute'),
+        event(now - 3 * MINUTE, 'earlier-today'),
+        event(now - 2 * DAY, 'two-days-ago'),
+      ])
+      .drain(),
+  );
+
+  it.each([5, 3 * SECOND, 20 * SECOND])(
+    'keeps the bucket in progress when `to` is %i ms behind now',
+    (lag) => {
+      const to = now - lag;
+      const minutes = queryTimeseries(store, { siteId: 's1', from: to - 30 * MINUTE, to, now });
+      expect(minutes.interval).toBe('minute');
+      expect(minutes.points.at(-1)).toMatchObject({ t: now - 40 * SECOND, pageviews: 1 });
+      const month = { siteId: 's1', from: to - 30 * DAY, to, now };
+      const days = queryTimeseries(store, month);
+      expect(days.interval).toBe('day');
+      expect(days.points.at(-1)).toMatchObject({ t: Date.parse('2026-06-10'), pageviews: 2 });
+      expect(querySummary(store, month).pageviews).toBe(3);
+    },
+  );
+
+  it('still snaps a historical `to` down to a bucket boundary', () => {
+    // 2 minutes behind now is not live: the minute that holds `to` is dropped.
+    const to = now - 2 * MINUTE - 30 * SECOND;
+    const minutes = queryTimeseries(store, { siteId: 's1', from: to - 30 * MINUTE, to, now });
+    expect(minutes.points.at(-1)!.t).toBe(Date.parse('2026-06-10T15:17:00Z'));
+    expect(minutes.points.reduce((s, p) => s + p.pageviews, 0)).toBe(1);
+    const days = { siteId: 's1', from: to - 30 * DAY, to, now };
+    expect(queryTimeseries(store, days).points.at(-1)!.t).toBe(Date.parse('2026-06-09'));
+    expect(querySummary(store, days).pageviews).toBe(1);
   });
 });

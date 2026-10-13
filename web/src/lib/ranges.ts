@@ -1,4 +1,4 @@
-import { DAY, HOUR, MINUTE } from '@pulse/core';
+import { DAY, HOUR, MINUTE, isLiveRange } from '@pulse/core';
 import type { Range } from '../data/source';
 
 export type PresetId = '30m' | 'today' | '24h' | '7d' | '30d' | 'custom';
@@ -60,7 +60,7 @@ export function shiftRange(r: Range, direction: -1 | 1, now: number): Range {
 }
 
 export function isLive(r: Range, now: number): boolean {
-  return r.to >= now - MINUTE;
+  return isLiveRange(r.to, now);
 }
 
 /** `<input type="datetime-local">` value for a timestamp in local time. */

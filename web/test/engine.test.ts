@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { DAY, HOUR, MINUTE } from '@pulse/core';
+import { DAY, HOUR, MINUTE, SECOND } from '@pulse/core';
 import { describe, expect, it } from 'vitest';
 import { DemoEngine } from '../src/data/demo/engine';
 
@@ -64,5 +64,23 @@ describe('DemoEngine (the in-browser backend used by the Pages demo)', () => {
     expect(r.interval).toBe('hour');
     expect(r.points).toHaveLength(6);
     expect(r.points.reduce((s, p) => s + p.pageviews, 0)).toBeGreaterThan(0);
+  });
+});
+
+describe('DemoEngine live windows', () => {
+  // The page stamps `to`; the worker reads its clock a little later.
+  const clock = { now: Date.parse('2026-06-10T15:20:40Z') };
+  const engine = new DemoEngine({ now: () => clock.now, historyDays: 3 });
+  const site = engine.sites()[0]!.id;
+
+  it.each([5, 3 * SECOND])('keeps today when `to` is %i ms behind the clock', (lag) => {
+    const exact = { from: clock.now - 30 * DAY, to: clock.now };
+    const late = { from: exact.from - lag, to: exact.to - lag };
+    const series = engine.timeseries(site, late);
+    expect(series.interval).toBe('day');
+    expect(series.points.at(-1)!.t).toBe(Date.parse('2026-06-10'));
+    expect(series.points.at(-1)!.pageviews).toBeGreaterThan(0);
+    expect(series).toEqual(engine.timeseries(site, exact));
+    expect(engine.summary(site, late).current).toEqual(engine.summary(site, exact).current);
   });
 });
