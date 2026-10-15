@@ -33,7 +33,7 @@ Write-up on how unique visitors are counted without cookies: [How Pulse counts u
 
 ## Numbers
 
-I measured everything in this section on this checkout on 2026-10-02 (Node 25.8.2, esbuild 0.28.2). Each figure names the code it comes from, and each measured one comes with the command that reproduces it.
+I measured everything in this section on this checkout on 2026-10-02 (Node 25.8.2, esbuild 0.28.2), except the figures that name a later date. Each figure names the code it comes from, and each measured one comes with the command that reproduces it.
 
 ### Tracker: 843 B minified, 560 B gzipped
 
@@ -123,7 +123,7 @@ npx vitest run packages/core/test/query.test.ts server/test/rollup-repo.test.ts 
 
 ### Tests: 118
 
-`npm test` runs 118 Vitest tests in 18 files: 63 in `packages/core` (HLL, time zones and DST, rollups, queries, uptime, generators), 34 in `server` (the API through `fastify.inject` on an in-memory `node:sqlite` database, a WebSocket on a real socket, SQLite vs. in-memory parity, the tracker in `node:vm`, CSV with formula neutralization, the daily salt, uptime scheduling with fake timers) and 21 in `web` under jsdom (demo engine, components, hotkeys, API client, utilities). Vitest reported 1.8 s for the run on my machine before the six tests that came with the bias correction; on a shared 4-CPU machine the run took about 6.5 s both with and without them. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs ESLint with `--max-warnings=0`, Prettier, `tsc` in strict mode with `noUncheckedIndexedAccess`, the tests and the build on Node 22 and 24; `npm run check` runs the same steps locally.
+`npm test` runs 118 Vitest tests in 18 files: 63 in `packages/core` (HLL, time zones and DST, rollups, queries, uptime, generators), 34 in `server` (the API through `fastify.inject` on an in-memory `node:sqlite` database, a WebSocket on a real socket, SQLite vs. in-memory parity, the tracker in `node:vm`, CSV with formula neutralization, the daily salt, uptime scheduling with fake timers) and 21 in `web` under jsdom (demo engine, components, hotkeys, API client, utilities). Vitest reported 1.8 s for the run on my machine before the six tests that came with the bias correction. On 2026-10-15 (Node 22.22.2, 4 CPUs shared with other jobs) six runs each took 6.4 to 7.9 s, with or without them. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs ESLint with `--max-warnings=0`, Prettier, `tsc` in strict mode with `noUncheckedIndexedAccess`, the tests and the build on Node 22 and 24; `npm run check` runs the same steps locally.
 
 ## How it fits together
 
@@ -273,7 +273,7 @@ Pulse — веб-аналитика без cookies и мониторинг до�
 
 ### Цифры
 
-Замерено на этом чекауте 2026-10-02 (Node 25.8.2, esbuild 0.28.2). Команды для повторения — в английской части выше.
+Замерено на этом чекауте 2026-10-02 (Node 25.8.2, esbuild 0.28.2), кроме цифр, у которых указана более поздняя дата. Команды для повторения — в английской части выше.
 
 - **Трекер: 843 Б минифицированный, 560 Б в gzip, 458 Б в brotli**, бюджет 2 048 Б. Размер считает [`server/tracker/bundle.ts`](server/tracker/bundle.ts); бюджет проверяют и сборка ([`build-tracker.mjs:6-9`](server/scripts/build-tracker.mjs#L6-L9)), и тест ([`tracker.test.ts:47-50`](server/test/tracker.test.ts#L47-L50)), который ещё требует меньше 1 024 Б в gzip. Повторить: `npm run build:tracker -w @pulse/server`.
 - **Посетители: стандартная ошибка 2,3 %, точный счёт до 512.** HyperLogLog с precision 11, 2 048 регистров ([`packages/core/src/hll.ts`](packages/core/src/hll.ts)). Пока хэшей не больше 512, скетч хранит их точным множеством, как sparse-режим в HLL++; на 513-м переходит в плотные регистры. Плотный скетч считается как в HLL++: линейный счёт, пока его оценка не больше 1 800, дальше сырая оценка минус эмпирическое смещение из приложения к статье про HLL++ для precision 11 ([`hll-bias.ts`](packages/core/src/hll-bias.ts)). Формат хранения не менялся, старые строки читаются и сливаются как раньше. Замер на 50 наборах id на размер (2026-10-15, Node 22.22.2): rms 1,78 % при 1 000, 1,82 % при 5 000, 1,99 % при 10 000, 2,36 % при 100 000; худшие случаи от 4,9 до 6,9 %. До коррекции смещения при 5 000 было 3,27 % rms и 7,88 % в худшем случае: там линейный счёт сменялся сырой оценкой без поправки.
