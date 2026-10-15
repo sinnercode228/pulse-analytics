@@ -1,6 +1,10 @@
 import { hash32 } from './hash.js';
+import { LINEAR_COUNTING_THRESHOLD, estimateBias } from './hll-bias.js';
 
-/** Register index bits. 2^11 registers → ~2.3% standard error, 2 KiB dense. */
+/**
+ * Register index bits. 2^11 registers → ~2.3% standard error, 2 KiB dense.
+ * The bias data in hll-bias.ts is for this precision only.
+ */
 export const HLL_PRECISION = 11;
 const M = 1 << HLL_PRECISION;
 /** Sparse sets switch to dense registers once they would be larger than them. */
@@ -72,9 +76,13 @@ export class Hll {
       sum += POW2_NEG[r]!;
       if (r === 0) zeros++;
     }
-    let estimate = (ALPHA * M * M) / sum;
-    if (estimate <= 2.5 * M && zeros > 0) estimate = M * Math.log(M / zeros);
-    return Math.round(estimate);
+    if (zeros > 0) {
+      const linear = M * Math.log(M / zeros);
+      if (linear <= LINEAR_COUNTING_THRESHOLD) return Math.round(linear);
+    }
+    // HLL++: the raw estimate overshoots up to 5·m; subtract the paper's empirical bias there.
+    const raw = (ALPHA * M * M) / sum;
+    return Math.round(raw <= 5 * M ? raw - estimateBias(raw) : raw);
   }
 
   clone(): Hll {
