@@ -76,21 +76,31 @@ const MIGRATIONS: readonly string[] = [
 export function openDatabase(path: string): Db {
   if (path !== ':memory:') mkdirSync(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000;');
+  db.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;');
   migrate(db);
   return db;
 }
 
 function migrate(db: Db): void {
-  const { user_version: version } = db.prepare('PRAGMA user_version').get() as {
-    user_version: number;
-  };
-  for (let v = version; v < MIGRATIONS.length; v++) {
-    transaction(db, () => {
+  if (userVersion(db) >= MIGRATIONS.length) return;
+  // The API and the uptime worker can open the file at the same moment. BEGIN IMMEDIATE
+  // takes the write lock before the version is read again, so the second one waits for
+  // the first one's migrations instead of running them a second time.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    for (let v = userVersion(db); v < MIGRATIONS.length; v++) {
       db.exec(MIGRATIONS[v]!);
       db.exec(`PRAGMA user_version = ${v + 1}`);
-    });
+    }
+    db.exec('COMMIT');
+  } catch (err) {
+    db.exec('ROLLBACK');
+    throw err;
   }
+}
+
+function userVersion(db: Db): number {
+  return (db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
 }
 
 export function transaction<T>(db: Db, fn: () => T): T {

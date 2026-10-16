@@ -1,4 +1,5 @@
 import { DAY, MINUTE, type CheckResult, type Monitor } from '@pulse/core';
+import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -378,12 +379,13 @@ describe('UptimeService', () => {
 });
 
 describe('UptimeRepository', () => {
-  it('gives the monitors of an existing database a failure threshold of 2 on start', () => {
+  /** A database file with the monitors table as the first version of the schema created it. */
+  function versionOneDatabase(): string {
     dir = mkdtempSync(join(tmpdir(), 'pulse-uptime-'));
     const path = join(dir, 'pulse.db');
-    // The monitors table as the first version of the schema created it.
     const old = new DatabaseSync(path);
-    old.exec(`CREATE TABLE monitors (
+    old.exec(`PRAGMA journal_mode = WAL;
+     CREATE TABLE monitors (
        id                 TEXT PRIMARY KEY,
        name               TEXT NOT NULL,
        url                TEXT NOT NULL,
@@ -398,12 +400,74 @@ describe('UptimeRepository', () => {
        VALUES ('api', 'API', 'https://api.example/health', 60, 5000, 500, 0);
      PRAGMA user_version = 1;`);
     old.close();
+    return path;
+  }
 
-    const db = openDatabase(path);
+  it('gives the monitors of an existing database a failure threshold of 2 on start', () => {
+    const db = openDatabase(versionOneDatabase());
     expect(new UptimeRepository(db).getMonitor('api')).toMatchObject({
       intervalSec: 60,
       failureThreshold: 2,
     });
     db.close();
   });
+
+  it('migrates once when the API and the uptime worker open an old database together', async () => {
+    const path = versionOneDatabase();
+    const results = await Promise.all(openTogether(path, 2));
+    expect(results).toEqual([
+      { code: 0, out: '2', err: '' },
+      { code: 0, out: '2', err: '' },
+    ]);
+    const db = openDatabase(path);
+    expect(new UptimeRepository(db).getMonitor('api')).toMatchObject({ failureThreshold: 2 });
+    db.close();
+  }, 30_000);
 });
+
+const DATABASE_MODULE = new URL('../src/db/database.ts', import.meta.url).href;
+
+/** Waits for a byte on stdin, then opens the database and prints its schema version. */
+const OPEN_ON_SIGNAL = `
+import { readSync } from 'node:fs';
+const { openDatabase } = await import(process.argv[1]);
+process.stdout.write('ready');
+readSync(0, Buffer.alloc(1));
+const db = openDatabase(process.argv[2]);
+const out = String(db.prepare('PRAGMA user_version').get().user_version);
+db.close();
+process.stdout.write(out);
+`;
+
+/** Starts `n` processes and lets them call `openDatabase` on `path` at the same moment. */
+function openTogether(path: string, n: number) {
+  const children = Array.from({ length: n }, () => {
+    const child = spawn(process.execPath, [
+      '--experimental-strip-types',
+      '--no-warnings',
+      '--input-type=module',
+      '-e',
+      OPEN_ON_SIGNAL,
+      DATABASE_MODULE,
+      path,
+    ]);
+    let out = '';
+    let err = '';
+    child.stderr.on('data', (d: Buffer) => (err += d.toString()));
+    const done = new Promise<{ code: number | null; out: string; err: string }>((resolve) =>
+      child.on('close', (code) => resolve({ code, out: out.replace(/^ready/, ''), err })),
+    );
+    const ready = new Promise<void>((resolve) => {
+      child.stdout.on('data', (d: Buffer) => {
+        out += d.toString();
+        if (out.startsWith('ready')) resolve();
+      });
+      void done.then(() => resolve());
+    });
+    return { child, ready, done };
+  });
+  void Promise.all(children.map((c) => c.ready)).then(() => {
+    for (const c of children) c.child.stdin.end('go');
+  });
+  return children.map((c) => c.done);
+}
