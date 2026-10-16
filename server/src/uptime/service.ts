@@ -1,5 +1,6 @@
 import {
   DAY,
+  DEFAULT_FAILURE_THRESHOLD,
   applyCheckToIncident,
   buildOverview,
   hourlyFromChecks,
@@ -53,10 +54,20 @@ export class UptimeService {
     return check;
   }
 
+  /**
+   * Reads the threshold and the incident state from the database on every check,
+   * so a restart keeps counting failed checks and a threshold posted to the admin
+   * API applies from the next check, without a new timer.
+   */
   record(check: CheckResult): void {
     const { repo } = this.opts;
-    const { changed } = applyCheckToIncident(repo.openIncident(check.monitorId), check, () =>
-      randomUUID(),
+    const threshold =
+      repo.getMonitor(check.monitorId)?.failureThreshold ?? DEFAULT_FAILURE_THRESHOLD;
+    const { changed } = applyCheckToIncident(
+      repo.incidentState(check.monitorId),
+      check,
+      threshold,
+      () => randomUUID(),
     );
     repo.recordCheck(check, changed, this.tz);
     this.opts.hub?.publish({ type: 'check', check });

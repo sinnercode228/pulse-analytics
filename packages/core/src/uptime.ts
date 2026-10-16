@@ -9,7 +9,12 @@ export interface Monitor {
   timeoutMs: number;
   /** Responses slower than this are "degraded" even when successful. */
   degradedAfterMs: number;
+  /** Failed checks in a row that open an incident; 1 opens one on the first failure. */
+  failureThreshold: number;
 }
+
+/** For monitors created without a `failureThreshold`. */
+export const DEFAULT_FAILURE_THRESHOLD = 2;
 
 export interface CheckResult {
   monitorId: string;
@@ -146,36 +151,50 @@ export function addToDaily(daily: DailyUptime, check: CheckResult): DailyUptime 
   return daily;
 }
 
+export interface IncidentState {
+  /** The incident in progress, `null` while none is open. */
+  open: Incident | null;
+  /** Failed checks in a row that have not opened an incident yet, oldest first. */
+  pending: readonly CheckResult[];
+}
+
 /**
- * Incident state machine: returns what to persist after a check.
- * - failure with no open incident → open one
- * - success with an open incident → resolve it
+ * Incident state machine: returns the next state and what to persist after a check.
+ * - failure with an open incident → extend it
+ * - failure that makes `threshold` in a row → open an incident from the first of them
+ * - any other failure → keep it in `pending`
+ * - success → resolve the open incident, if any, and clear `pending`
  */
 export function applyCheckToIncident(
-  open: Incident | null,
+  state: IncidentState,
   check: CheckResult,
+  threshold: number,
   newId: () => string,
-): { open: Incident | null; changed: Incident | null } {
+): { state: IncidentState; changed: Incident | null } {
+  const { open } = state;
   if (!check.ok) {
     if (open) {
       const next = { ...open, failures: open.failures + 1 };
-      return { open: next, changed: next };
+      return { state: { open: next, pending: [] }, changed: next };
     }
+    const pending = [...state.pending, check];
+    if (pending.length < threshold) return { state: { open: null, pending }, changed: null };
+    const first = pending[0]!;
     const created: Incident = {
       id: newId(),
       monitorId: check.monitorId,
-      startedAt: check.ts,
+      startedAt: first.ts,
       resolvedAt: null,
-      cause: check.error ?? (check.status !== null ? `HTTP ${check.status}` : 'Unknown error'),
-      failures: 1,
+      cause: first.error ?? (first.status !== null ? `HTTP ${first.status}` : 'Unknown error'),
+      failures: pending.length,
     };
-    return { open: created, changed: created };
+    return { state: { open: created, pending: [] }, changed: created };
   }
   if (open) {
     const resolved = { ...open, resolvedAt: check.ts };
-    return { open: null, changed: resolved };
+    return { state: { open: null, pending: [] }, changed: resolved };
   }
-  return { open: null, changed: null };
+  return { state: { open: null, pending: [] }, changed: null };
 }
 
 interface CheckBucket {

@@ -4,6 +4,7 @@ import {
   type CheckResult,
   type DailyUptime,
   type Incident,
+  type IncidentState,
   type Monitor,
 } from '@pulse/core';
 import { transaction, type Db } from './database.js';
@@ -20,6 +21,7 @@ interface MonitorRow {
   interval_sec: number;
   timeout_ms: number;
   degraded_after_ms: number;
+  failure_threshold: number;
   paused: number;
 }
 
@@ -49,6 +51,7 @@ const toMonitor = (r: MonitorRow): StoredMonitor => ({
   intervalSec: r.interval_sec,
   timeoutMs: r.timeout_ms,
   degradedAfterMs: r.degraded_after_ms,
+  failureThreshold: r.failure_threshold,
   paused: r.paused === 1,
 });
 
@@ -93,11 +96,12 @@ export class UptimeRepository {
   upsertMonitor(m: Monitor, paused = false, now = Date.now()): void {
     this.db
       .prepare(
-        `INSERT INTO monitors (id, name, url, method, interval_sec, timeout_ms, degraded_after_ms, paused, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO monitors (id, name, url, method, interval_sec, timeout_ms, degraded_after_ms, failure_threshold, paused, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET name = excluded.name, url = excluded.url, method = excluded.method,
            interval_sec = excluded.interval_sec, timeout_ms = excluded.timeout_ms,
-           degraded_after_ms = excluded.degraded_after_ms, paused = excluded.paused`,
+           degraded_after_ms = excluded.degraded_after_ms, failure_threshold = excluded.failure_threshold,
+           paused = excluded.paused`,
       )
       .run(
         m.id,
@@ -107,6 +111,7 @@ export class UptimeRepository {
         m.intervalSec,
         m.timeoutMs,
         m.degradedAfterMs,
+        m.failureThreshold,
         paused ? 1 : 0,
         now,
       );
@@ -119,6 +124,25 @@ export class UptimeRepository {
       )
       .get(monitorId) as IncidentRow | undefined;
     return row ? toIncident(row) : null;
+  }
+
+  /**
+   * The incident state the stored checks leave a monitor in: its open incident,
+   * or else the failed checks after its latest successful one.
+   */
+  incidentState(monitorId: string): IncidentState {
+    const open = this.openIncident(monitorId);
+    if (open) return { open, pending: [] };
+    const pending = (
+      this.db
+        .prepare(
+          `SELECT * FROM checks WHERE monitor_id = ?1 AND ts > COALESCE(
+             (SELECT ts FROM checks WHERE monitor_id = ?1 AND ok = 1 ORDER BY ts DESC LIMIT 1), -1)
+           ORDER BY ts`,
+        )
+        .all(monitorId) as unknown as CheckRow[]
+    ).map(toCheck);
+    return { open: null, pending };
   }
 
   /** Persists one check: raw row, daily rollup and (optionally) the incident it changed. */

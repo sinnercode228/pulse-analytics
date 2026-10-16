@@ -73,6 +73,7 @@ uptime.upsertMonitor({
   intervalSec: 60,
   timeoutMs: 5_000,
   degradedAfterMs: 300,
+  failureThreshold: 2,
 });
 
 console.log(`Done: ${rollups.count().toLocaleString('en')} rollup rows.`);

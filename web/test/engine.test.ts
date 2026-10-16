@@ -49,7 +49,12 @@ describe('DemoEngine (the in-browser backend used by the Pages demo)', () => {
   it('simulates monitors with a 90-day heatmap and emits checks live', () => {
     const monitors = engine.monitors();
     expect(monitors.length).toBeGreaterThanOrEqual(5);
-    for (const m of monitors) expect(m.daily).toHaveLength(90);
+    for (const m of monitors) {
+      expect(m.daily).toHaveLength(90);
+      // Same rule as the server: a single failed check does not open an incident.
+      expect(m.monitor.failureThreshold).toBe(2);
+      for (const i of m.incidents) expect(i.failures).toBeGreaterThanOrEqual(2);
+    }
     const detail = engine.monitor(monitors[0]!.monitor.id);
     expect(detail.hourly.length).toBeGreaterThan(100);
     clock.now += 3 * MINUTE;
