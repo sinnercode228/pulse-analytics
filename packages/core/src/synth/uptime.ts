@@ -6,6 +6,7 @@ import {
   type DailyUptime,
   type HourlyUptime,
   type Incident,
+  type IncidentState,
   type Monitor,
 } from '../uptime.js';
 import { Rng } from './prng.js';
@@ -37,6 +38,7 @@ export const MONITOR_PROFILES: readonly MonitorProfile[] = [
     intervalSec: 60,
     timeoutMs: 10_000,
     degradedAfterMs: 800,
+    failureThreshold: 2,
     baseLatencyMs: 118,
     jitter: 0.22,
     blipRate: 0.00004,
@@ -65,6 +67,7 @@ export const MONITOR_PROFILES: readonly MonitorProfile[] = [
     intervalSec: 60,
     timeoutMs: 10_000,
     degradedAfterMs: 600,
+    failureThreshold: 2,
     baseLatencyMs: 46,
     jitter: 0.3,
     blipRate: 0.00002,
@@ -78,6 +81,7 @@ export const MONITOR_PROFILES: readonly MonitorProfile[] = [
     intervalSec: 60,
     timeoutMs: 10_000,
     degradedAfterMs: 1200,
+    failureThreshold: 2,
     baseLatencyMs: 284,
     jitter: 0.25,
     blipRate: 0.00006,
@@ -112,6 +116,7 @@ export const MONITOR_PROFILES: readonly MonitorProfile[] = [
     intervalSec: 30,
     timeoutMs: 5_000,
     degradedAfterMs: 450,
+    failureThreshold: 2,
     baseLatencyMs: 92,
     jitter: 0.35,
     blipRate: 0.00008,
@@ -135,6 +140,7 @@ export const MONITOR_PROFILES: readonly MonitorProfile[] = [
     intervalSec: 60,
     timeoutMs: 10_000,
     degradedAfterMs: 900,
+    failureThreshold: 2,
     baseLatencyMs: 162,
     jitter: 0.28,
     blipRate: 0.00003,
@@ -156,6 +162,7 @@ export const MONITOR_PROFILES: readonly MonitorProfile[] = [
     intervalSec: 30,
     timeoutMs: 5_000,
     degradedAfterMs: 500,
+    failureThreshold: 2,
     baseLatencyMs: 64,
     jitter: 0.25,
     blipRate: 0.00005,
@@ -192,7 +199,7 @@ export class MonitorSimulator {
   readonly hourly = new Map<number, HourlyUptime & { latencySum: number; ok: number }>();
   readonly recent: CheckResult[] = [];
   readonly incidents: Incident[] = [];
-  private openIncident: Incident | null = null;
+  private incidentState: IncidentState = { open: null, pending: [] };
   private cursor: number;
   private readonly rng: Rng;
   private incidentSeq = 0;
@@ -285,9 +292,10 @@ export class MonitorSimulator {
     }
     if (check.ts >= this.anchor - RAW_RETENTION) this.recent.push(check);
 
-    const { open, changed } = applyCheckToIncident(
-      this.openIncident,
+    const { state, changed } = applyCheckToIncident(
+      this.incidentState,
       check,
+      this.profile.failureThreshold,
       () => `${this.profile.id}-inc-${++this.incidentSeq}`,
     );
     if (changed) {
@@ -295,7 +303,7 @@ export class MonitorSimulator {
       if (idx >= 0) this.incidents[idx] = changed;
       else this.incidents.push(changed);
     }
-    this.openIncident = open;
+    this.incidentState = state;
   }
 
   private trim(now: number): void {

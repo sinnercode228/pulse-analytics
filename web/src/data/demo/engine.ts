@@ -258,5 +258,6 @@ function plainMonitor(p: MonitorProfile): Monitor {
     intervalSec: p.intervalSec,
     timeoutMs: p.timeoutMs,
     degradedAfterMs: p.degradedAfterMs,
+    failureThreshold: p.failureThreshold,
   };
 }

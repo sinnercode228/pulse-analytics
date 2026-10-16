@@ -70,6 +70,7 @@ const MIGRATIONS: readonly string[] = [
      failures     INTEGER NOT NULL
    );
    CREATE INDEX incidents_by_monitor ON incidents (monitor_id, started_at);`,
+  `ALTER TABLE monitors ADD COLUMN failure_threshold INTEGER NOT NULL DEFAULT 2;`,
 ];
 
 export function openDatabase(path: string): Db {

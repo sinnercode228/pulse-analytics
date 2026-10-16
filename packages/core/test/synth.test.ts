@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DAY, HOUR, MINUTE, type PageviewEvent } from '../src/index.js';
+import { DAY, HOUR, MINUTE, type CheckResult, type PageviewEvent } from '../src/index.js';
 import {
   MONITOR_PROFILES,
   MonitorSimulator,
@@ -84,5 +84,37 @@ describe('synthetic monitors', () => {
     const emitted: number[] = [];
     sim.advance(next + 2 * MINUTE, (c) => emitted.push(c.ts));
     expect(emitted).toEqual([next, next + MINUTE, next + 2 * MINUTE]);
+  });
+
+  it('opens an incident only for runs of failureThreshold failed checks, from the first of them', () => {
+    let shortRuns = 0;
+    for (const profile of MONITOR_PROFILES) {
+      expect(profile.failureThreshold).toBe(2);
+      const sim = new MonitorSimulator(profile, ANCHOR, ANCHOR - 90 * DAY);
+      const checks: CheckResult[] = [];
+      sim.advance(ANCHOR, (c) => checks.push(c));
+      const runs: { startedAt: number; resolvedAt: number | null; failures: number }[] = [];
+      let run: (typeof runs)[number] | null = null;
+      for (const c of checks) {
+        if (!c.ok && run) run.failures += 1;
+        else if (!c.ok) {
+          run = { startedAt: c.ts, resolvedAt: null, failures: 1 };
+          runs.push(run);
+        } else if (run) {
+          run.resolvedAt = c.ts;
+          run = null;
+        }
+      }
+      shortRuns += runs.filter((r) => r.failures < 2).length;
+      expect(
+        sim.incidents.map(({ startedAt, resolvedAt, failures }) => ({
+          startedAt,
+          resolvedAt,
+          failures,
+        })),
+      ).toEqual(runs.filter((r) => r.failures >= 2));
+    }
+    // Random single failed checks happen, and none of them opened an incident.
+    expect(shortRuns).toBeGreaterThan(0);
   });
 });

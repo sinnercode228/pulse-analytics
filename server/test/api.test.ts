@@ -239,6 +239,10 @@ describe('admin API', () => {
       payload: { id: 'site', name: 'Site', url: 'https://demo.example/' },
     });
     expect(res.statusCode).toBe(201);
-    expect(t.ctx.uptimeRepo.getMonitor('site')).toMatchObject({ intervalSec: 60, paused: false });
+    expect(t.ctx.uptimeRepo.getMonitor('site')).toMatchObject({
+      intervalSec: 60,
+      failureThreshold: 2,
+      paused: false,
+    });
   });
 });

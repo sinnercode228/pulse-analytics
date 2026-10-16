@@ -1,4 +1,4 @@
-import { isValidTimeZone } from '@pulse/core';
+import { DEFAULT_FAILURE_THRESHOLD, isValidTimeZone } from '@pulse/core';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { timingSafeEqual } from 'node:crypto';
 import type { AppContext } from '../context.js';
@@ -27,6 +27,7 @@ const monitorBody = {
     intervalSec: { type: 'integer', minimum: 30, maximum: 3600 },
     timeoutMs: { type: 'integer', minimum: 1000, maximum: 30000 },
     degradedAfterMs: { type: 'integer', minimum: 50, maximum: 30000 },
+    failureThreshold: { type: 'integer', minimum: 1, maximum: 10 },
   },
 } as const;
 
@@ -45,6 +46,7 @@ interface MonitorBody {
   intervalSec?: number;
   timeoutMs?: number;
   degradedAfterMs?: number;
+  failureThreshold?: number;
 }
 
 function authorized(req: FastifyRequest, token: string): boolean {
@@ -85,6 +87,7 @@ export function adminRoutes(app: FastifyInstance, ctx: AppContext): void {
         intervalSec: 60,
         timeoutMs: 10_000,
         degradedAfterMs: 1_000,
+        failureThreshold: DEFAULT_FAILURE_THRESHOLD,
         ...req.body,
       };
       ctx.uptimeRepo.upsertMonitor(monitor, false, ctx.now());
