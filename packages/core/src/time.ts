@@ -66,9 +66,17 @@ export function startOfDay(ts: number, timeZone = 'UTC'): number {
 export function bucketStart(ts: number, granularity: Granularity, timeZone = 'UTC'): number {
   switch (granularity) {
     case 'minute':
+      // Every zone offset is a whole number of minutes, so UTC and local
+      // minute boundaries always coincide.
       return Math.floor(ts / MINUTE) * MINUTE;
-    case 'hour':
-      return Math.floor(ts / HOUR) * HOUR;
+    case 'hour': {
+      // Align to the local hour, like startOfDay does for the day: half-offset
+      // zones (e.g. Asia/Kolkata) start their hours at :30 past the UTC hour.
+      const offset = tzOffsetMinutes(ts, timeZone) * MINUTE;
+      const localHour = Math.floor((ts + offset) / HOUR) * HOUR;
+      const offsetAtHour = tzOffsetMinutes(localHour - offset, timeZone) * MINUTE;
+      return localHour - offsetAtHour;
+    }
     case 'day':
       return startOfDay(ts, timeZone);
   }
