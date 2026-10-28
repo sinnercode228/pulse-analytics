@@ -1,4 +1,4 @@
-import { DAY, HOUR, MINUTE, isLiveRange } from '@pulse/core';
+import { DAY, HOUR, MINUTE, isLiveRange, startOfDay } from '@pulse/core';
 import type { Range } from '../data/source';
 
 export type PresetId = '30m' | 'today' | '24h' | '7d' | '30d' | 'custom';
@@ -27,19 +27,28 @@ export function startOfLocalDay(ts: number): number {
   return d.getTime();
 }
 
-/** Live presets end "now"; the query layer keeps the in-progress bucket for them. */
-export function presetRange(id: Exclude<PresetId, 'custom'>, now: number): Range {
+/**
+ * Live presets end "now"; the query layer keeps the in-progress bucket for them.
+ * Day presets start at midnight in `timeZone` (the site's, which the server
+ * buckets by), or in the browser's zone while the site is not known yet.
+ */
+export function presetRange(
+  id: Exclude<PresetId, 'custom'>,
+  now: number,
+  timeZone?: string | null,
+): Range {
+  const dayStart = (ts: number) => (timeZone ? startOfDay(ts, timeZone) : startOfLocalDay(ts));
   switch (id) {
     case '30m':
       return { from: now - 30 * MINUTE, to: now };
     case 'today':
-      return { from: startOfLocalDay(now), to: now };
+      return { from: dayStart(now), to: now };
     case '24h':
       return { from: now - 24 * HOUR, to: now };
     case '7d':
-      return { from: startOfLocalDay(now - 6 * DAY), to: now };
+      return { from: dayStart(now - 6 * DAY), to: now };
     case '30d':
-      return { from: startOfLocalDay(now - 29 * DAY), to: now };
+      return { from: dayStart(now - 29 * DAY), to: now };
   }
 }
 

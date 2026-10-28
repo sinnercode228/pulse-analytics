@@ -50,6 +50,17 @@ describe('ranges', () => {
     expect(isLive(presetRange('7d', now), now)).toBe(true);
   });
 
+  it('starts day presets at midnight in the site time zone, not the browser one', () => {
+    expect(presetRange('today', now, 'UTC').from).toBe(Date.parse('2026-06-10T00:00:00Z'));
+    expect(presetRange('today', now, 'Asia/Kolkata').from).toBe(Date.parse('2026-06-09T18:30:00Z'));
+    expect(presetRange('7d', now, 'America/New_York').from).toBe(
+      Date.parse('2026-06-04T04:00:00Z'),
+    );
+    expect(selectRange({ preset: 'today', custom: null, timeZone: 'Asia/Kolkata' }, now).from).toBe(
+      Date.parse('2026-06-09T18:30:00Z'),
+    );
+  });
+
   it('shifts windows without leaving the retained history', () => {
     const r = { from: now - 2 * HOUR, to: now };
     expect(shiftRange(r, -1, now)).toEqual({ from: now - 4 * HOUR, to: now - 2 * HOUR });

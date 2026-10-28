@@ -8,6 +8,8 @@ export type Metric = 'visitors' | 'pageviews';
 export interface DashboardState {
   view: View;
   siteId: string | null;
+  /** Time zone of the selected site; day presets start at its midnight. */
+  timeZone: string | null;
   preset: PresetId;
   /** Only meaningful when `preset === 'custom'`. */
   custom: Range | null;
@@ -22,6 +24,7 @@ export interface DashboardState {
 
   setView(view: View): void;
   setSite(siteId: string): void;
+  setTimeZone(timeZone: string | null): void;
   setPreset(preset: Exclude<PresetId, 'custom'>): void;
   setCustom(range: Range): void;
   shift(direction: -1 | 1, now?: number): void;
@@ -36,6 +39,7 @@ export interface DashboardState {
 export const useDashboard = create<DashboardState>()((set, get) => ({
   view: 'analytics',
   siteId: null,
+  timeZone: null,
   preset: '24h',
   custom: null,
   metric: 'visitors',
@@ -47,6 +51,7 @@ export const useDashboard = create<DashboardState>()((set, get) => ({
 
   setView: (view) => set({ view }),
   setSite: (siteId) => set({ siteId }),
+  setTimeZone: (timeZone) => set({ timeZone }),
   setPreset: (preset) => set({ preset, custom: null }),
   setCustom: (range) => set({ preset: 'custom', custom: range }),
   shift: (direction, now = Date.now()) => {
@@ -61,10 +66,13 @@ export const useDashboard = create<DashboardState>()((set, get) => ({
   openMonitor: (monitorId) => set({ monitorId }),
 }));
 
-export function selectRange(s: Pick<DashboardState, 'preset' | 'custom'>, now = Date.now()): Range {
+export function selectRange(
+  s: Pick<DashboardState, 'preset' | 'custom'> & Partial<Pick<DashboardState, 'timeZone'>>,
+  now = Date.now(),
+): Range {
   if (s.preset === 'custom' && s.custom) return s.custom;
   const preset = s.preset === 'custom' ? '24h' : s.preset;
-  return presetRange(preset, now);
+  return presetRange(preset, now, s.timeZone);
 }
 
 export function presetLabel(s: Pick<DashboardState, 'preset'>): string {
