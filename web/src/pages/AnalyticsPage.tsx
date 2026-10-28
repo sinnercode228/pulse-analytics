@@ -27,6 +27,7 @@ export const AnalyticsPage = forwardRef<AnalyticsPageHandle, { siteId: string }>
     const ds = useDataSource();
     const preset = useDashboard((s) => s.preset);
     const custom = useDashboard((s) => s.custom);
+    const timeZone = useDashboard((s) => s.timeZone);
     const refreshKey = useDashboard((s) => s.refreshKey);
     const metric = useDashboard((s) => s.metric);
     const setMetric = useDashboard((s) => s.setMetric);
@@ -34,8 +35,8 @@ export const AnalyticsPage = forwardRef<AnalyticsPageHandle, { siteId: string }>
     const pagesRef = useRef<BreakdownCardHandle>(null);
 
     // Presets are re-evaluated on each refresh tick, so live windows slide forward.
-    const range = selectRange({ preset, custom });
-    const key = `${siteId}|${preset}|${custom?.from}|${custom?.to}|${refreshKey}`;
+    const range = selectRange({ preset, custom, timeZone });
+    const key = `${siteId}|${preset}|${custom?.from}|${custom?.to}|${timeZone}|${refreshKey}`;
     const summary = useQuery(key, () => ds.summary(siteId, range));
     const series = useQuery(key, () => ds.timeseries(siteId, range));
     const realtime = useQuery(`${siteId}|${refreshKey}`, () => ds.realtime(siteId));

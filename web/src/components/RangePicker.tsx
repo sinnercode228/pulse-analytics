@@ -8,12 +8,13 @@ import { Icon } from './Icon';
 export function RangePicker() {
   const preset = useDashboard((s) => s.preset);
   const custom = useDashboard((s) => s.custom);
+  const timeZone = useDashboard((s) => s.timeZone);
   const setPreset = useDashboard((s) => s.setPreset);
   const setCustom = useDashboard((s) => s.setCustom);
   const shift = useDashboard((s) => s.shift);
   const open = useDashboard((s) => s.rangeOpen);
   const setOpen = useDashboard((s) => s.setRangeOpen);
-  const range = selectRange({ preset, custom });
+  const range = selectRange({ preset, custom, timeZone });
   const [from, setFrom] = useState(toLocalInput(range.from));
   const [to, setTo] = useState(toLocalInput(range.to));
   const popRef = useRef<HTMLDivElement>(null);

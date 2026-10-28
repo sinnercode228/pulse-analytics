@@ -32,6 +32,11 @@ export function App({ dataSource }: { dataSource: DataSource }) {
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
   }, [dataSource]);
 
+  // Day presets start at the selected site's midnight, as the server's day buckets do.
+  useEffect(() => {
+    useDashboard.getState().setTimeZone(sites?.find((x) => x.id === s.siteId)?.timeZone ?? null);
+  }, [sites, s.siteId]);
+
   // Two-way sync between the URL hash and the current view / open monitor.
   useEffect(() => {
     const apply = () => useDashboard.setState(readHash(location.hash));
